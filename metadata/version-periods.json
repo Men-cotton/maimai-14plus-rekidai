@@ -1,0 +1,33 @@
+{
+  "sourceUrl": "https://gamerch.com/maimai/533367",
+  "checkedAt": "2026-08-24",
+  "periods": [
+    { "version": "CiRCLE PLUS", "start": "2026/03/19", "end": null },
+    { "version": "CiRCLE", "start": "2025/09/18", "end": "2026/03/18" },
+    { "version": "PRiSM PLUS", "start": "2025/03/13", "end": "2025/09/17" },
+    { "version": "PRiSM", "start": "2024/09/12", "end": "2025/03/12" },
+    { "version": "BUDDiES PLUS", "start": "2024/03/21", "end": "2024/09/11" },
+    { "version": "BUDDiES", "start": "2023/09/14", "end": "2024/03/20" },
+    { "version": "FESTiVAL PLUS", "start": "2023/03/22", "end": "2023/09/13" },
+    { "version": "FESTiVAL", "start": "2022/09/15", "end": "2023/03/22" },
+    { "version": "UNiVERSE PLUS", "start": "2022/03/24", "end": "2022/09/14" },
+    { "version": "UNiVERSE", "start": "2021/09/16", "end": "2022/03/23" },
+    { "version": "Splash PLUS", "start": "2021/03/18", "end": "2021/09/15" },
+    { "version": "Splash", "start": "2020/09/17", "end": "2021/03/17" },
+    { "version": "maimaiでらっくす PLUS", "start": "2020/01/23", "end": "2020/09/16" },
+    { "version": "maimaiでらっくす", "start": "2019/07/11", "end": "2020/01/22" },
+    { "version": "FiNALE", "start": "2018/12/13", "end": "2019/07/10" },
+    { "version": "MiLK PLUS", "start": "2018/06/21", "end": "2018/12/12" },
+    { "version": "MiLK", "start": "2017/12/14", "end": "2018/06/20" },
+    { "version": "MURASAKi PLUS", "start": "2017/06/22", "end": "2017/12/13" },
+    { "version": "MURASAKi", "start": "2016/12/15", "end": "2017/06/21" },
+    { "version": "PiNK PLUS", "start": "2016/06/30", "end": "2016/12/14" },
+    { "version": "PiNK", "start": "2015/12/09", "end": "2016/06/29" },
+    { "version": "ORANGE PLUS", "start": "2015/03/19", "end": "2015/12/08" },
+    { "version": "ORANGE", "start": "2014/09/18", "end": "2015/03/18" },
+    { "version": "GreeN PLUS", "start": "2014/02/26", "end": "2014/09/17" },
+    { "version": "GreeN", "start": "2013/07/11", "end": "2014/02/25" },
+    { "version": "maimai PLUS", "start": "2012/12/13", "end": "2013/07/10" },
+    { "version": "maimai", "start": "2012/07/11", "end": "2012/12/12" }
+  ]
+}

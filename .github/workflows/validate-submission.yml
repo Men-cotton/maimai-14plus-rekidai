@@ -1,0 +1,46 @@
+name: Validate submitted CSV
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+jobs:
+  trusted-csv-validation:
+    name: Trusted CSV validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout trusted base revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Fetch pull request data without checkout
+        shell: bash
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: git fetch --no-tags origin "pull/${PR_NUMBER}/head:refs/remotes/origin/pr-validation"
+      - name: Import only a permitted CSV
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_ACTOR: ${{ github.event.pull_request.user.login }}
+        run: node scripts/import-pr-update.mjs "$BASE_SHA" refs/remotes/origin/pr-validation "$PR_ACTOR"
+      - name: Test trusted validators
+        run: npm test
+      - name: Validate CSV with trusted code
+        id: validate
+        continue-on-error: true
+        run: npm run validate
+      - name: Add validation report to summary
+        if: always()
+        shell: bash
+        run: if [[ -f dist/validation-report.md ]]; then cat dist/validation-report.md >> "$GITHUB_STEP_SUMMARY"; fi
+      - name: Reject validation errors
+        if: steps.validate.outcome == 'failure'
+        run: exit 1
+      - name: Build with trusted code
+        run: npm run build

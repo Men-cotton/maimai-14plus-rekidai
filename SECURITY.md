@@ -1,0 +1,5 @@
+# Security Policy
+
+脆弱性またはランキングCSVに含まれるべきでない情報を発見した場合は、公開Issueへ秘密情報を書かず、GitHubのPrivate vulnerability reportingを利用してください。
+
+このリポジトリや公開サイトへmaimai DX NETのCookie、セッション情報、パスワード、アクセストークンを追加しないでください。

@@ -1,0 +1,35 @@
+name: Validate pull request
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+jobs:
+  repository-tests:
+    name: Repository tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout pull request
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Test validators
+        run: npm test
+      - name: Validate complete history
+        id: validate
+        continue-on-error: true
+        run: npm run validate
+      - name: Add validation report to summary
+        if: always()
+        shell: bash
+        run: if [[ -f dist/validation-report.md ]]; then cat dist/validation-report.md >> "$GITHUB_STEP_SUMMARY"; fi
+      - name: Reject validation errors
+        if: steps.validate.outcome == 'failure'
+        run: exit 1
+      - name: Build static site
+        run: npm run build

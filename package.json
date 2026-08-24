@@ -1,0 +1,16 @@
+{
+  "name": "maimai-14plus-rekidai",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "validate": "node scripts/validate-repository.mjs",
+    "build": "node scripts/build-site.mjs",
+    "test": "node test/validation.test.mjs",
+    "check": "node test/validation.test.mjs && node scripts/validate-repository.mjs && node scripts/build-site.mjs",
+    "baseline:roll": "node scripts/roll-baseline.mjs"
+  }
+}
