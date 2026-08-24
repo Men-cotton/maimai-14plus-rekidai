@@ -125,6 +125,33 @@ test("BAN対象は正規化され、メールアドレスを平文保存しな�
   assert.equal(sandbox.isSubmitterBanned_("bad.actor@example.com"), false);
 });
 
+test("信頼点は初期値0、上限1で提出ごとに1だけ増減", () => {
+  const email = "reputation@example.com";
+  assert.equal(sandbox.submitterReputation_(email), 0);
+  assert.equal(sandbox.updateSubmitterReputation_(email, 1, "valid"), 1);
+  assert.equal(sandbox.updateSubmitterReputation_(email, 1, "valid"), 1);
+  assert.equal(sandbox.updateSubmitterReputation_(email, -1, "invalid"), 0);
+  assert.equal(sandbox.updateSubmitterReputation_(email, -1, "invalid"), -1);
+  const stored = scriptProperties.get("SUBMITTER_REPUTATION_V1");
+  assert.equal(stored.includes(email), false);
+});
+
+test("信頼点が-3に到達した瞬間に自動BANし、解除時は0へ戻す", () => {
+  const email = "auto-ban@example.com";
+  const originalQuarantine = sandbox.quarantineBannedSubmitter_;
+  let quarantineCount = 0;
+  sandbox.quarantineBannedSubmitter_ = () => { quarantineCount += 1; return {}; };
+  assert.deepEqual({ ...sandbox.recordSubmissionReputation_(email, -1, "invalid") }, { score: -1, autoBanned: false });
+  assert.deepEqual({ ...sandbox.recordSubmissionReputation_(email, -1, "invalid") }, { score: -2, autoBanned: false });
+  assert.deepEqual({ ...sandbox.recordSubmissionReputation_(email, -1, "invalid") }, { score: -3, autoBanned: true });
+  assert.equal(sandbox.isSubmitterBanned_(email), true);
+  assert.equal(quarantineCount, 1);
+  assert.equal(sandbox.unbanSubmitter_(email), true);
+  assert.equal(sandbox.isSubmitterBanned_(email), false);
+  assert.equal(sandbox.submitterReputation_(email), 0);
+  sandbox.quarantineBannedSubmitter_ = originalQuarantine;
+});
+
 test("BAN時に未確定キューから同アカウントの確認票を除外", () => {
   const baseline = [{ ...base, score: 270, rate: 90 }];
   const candidate = [{ ...base, score: 273, rate: 91, achievedAt: "2026/08/21 12:00" }];
