@@ -8,13 +8,13 @@ maimai DX NETから取得した難易度14+の歴代表を、検証済みCSVか�
 
 ## 更新方法
 
-1. 配布済みの取得スクリプトを実行してCSVを生成します。
-2. GitHubの `data/updates/` を開き、**Add file → Upload files** でCSVを1件だけアップロードします。
-3. **Propose changes** からPull Requestを作ります。
-4. `Repository tests` と `Trusted CSV validation` が成功したら、保守者が警告内容を確認してマージします。
-5. `main` へのマージ後、GitHub Pagesが自動更新されます。
+一般利用者は配布済みの取得スクリプトでCSVを生成し、Googleへのログインが必要なGoogleフォームへアップロードします。GitHubアカウントは不要です。
 
-CSVファイル名は `maimai-14plus-dxscore-rank1-YYYYMMDD-HHMM.csv` のまま変更しません。各CSVは監査履歴として残り、初期値から日時順に再生されます。このため、CIがリポジトリへ書き戻す権限は不要です。
+最初のCSVに現れたランキング差分は公開せず、譜面単位で保留します。別の確認済みGoogleアカウントから届いた次のCSVにも同じ差分があれば、その差分だけを確定します。新たな別差分は同時に保留できるため、CSV全体の完全一致は不要です。確定差分はApps Scriptが正本へ合成し、GitHub AppでPull Requestを作成します。`Repository tests` と `Trusted CSV validation` の成功後に自動マージされ、GitHub Pagesが更新されます。
+
+導入時の正本は2026-08-24 21:15取得版です。Googleフォーム受付の実装と設定手順は [`intake/google-form/`](intake/google-form/) にあります。
+
+CSVファイル名は `maimai-14plus-dxscore-rank1-YYYYMMDD-HHMM.csv` のまま変更しません。確定差分から生成した各CSVは監査履歴として残り、初期値から日時順に再生されます。Apps Scriptは `main` へ直接書き込まず、保護されたPR経由でのみ更新します。
 
 ## 検証規則
 
@@ -64,6 +64,8 @@ ERRORが1件でもあればPRは失敗し、サイトは更新されません。
 - 外部Actionは完全なコミットSHAに固定しています。
 - DependabotのAction更新PRも同じテストと保守者確認を通します。
 - サイトはビルド済み静的HTML/JSONだけで、maimai DX NETのCookieを含みません。
+- Google確認済みメールアドレスは非公開の回答Sheetと差分キューにだけ保存し、CSV・PR・公開サイトへ出力しません。
+- 同一アカウントの再提出は差分の確認数を増やしません。提出回数にも上限を設けます。
 
 ## ローカル確認
 
