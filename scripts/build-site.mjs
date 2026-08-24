@@ -105,7 +105,7 @@ const html = `<!doctype html>
 <thead><tr><th class="c">難易度</th><th class="c">種別</th><th><button data-sort="version">VERSION</button></th><th class="c"><button data-sort="constant">定数</button></th><th class="song">曲名</th><th class="n"><button data-sort="score">SCORE</button></th><th class="gap"><button data-sort="gap">MAX差</button></th><th class="c"><button data-sort="rate">RATE</button></th><th class="n"><button data-sort="notes">NOTES</button></th><th>プレイヤー</th><th><button data-sort="date">DATE</button></th></tr></thead>
 <tbody id="ranking">${rows}</tbody>
 </table></div>
-<footer>ランキング: <a href="https://maimaidx.jp/">maimai DX NET</a> / 初出バージョン: <a href="https://github.com/realtvop/SaltMeta">SaltMeta</a> / 定数: <a href="https://gamerch.com/maimai/">maimai　攻略wiki</a> / 参考: <a href="https://docs.google.com/spreadsheets/d/1badmnhvsFKU8C1LydrvaaCC-L3fETIZ3PRfPV_qFrUk/preview">IIDX SP☆12歴代表</a> / 開発者: <a href="https://x.com/men_cotton">men_cotton</a></footer>
+<footer>ランキング: <a href="https://maimaidx.jp/">maimai DX NET</a> / 初出バージョン: <a href="https://github.com/realtvop/SaltMeta">SaltMeta</a> / 定数: <a href="https://gamerch.com/maimai/">maimai　攻略wiki</a> / 参考: <a href="https://docs.google.com/spreadsheets/d/1badmnhvsFKU8C1LydrvaaCC-L3fETIZ3PRfPV_qFrUk/preview">IIDX SP☆12歴代表</a> / CSV提供: <a href="https://docs.google.com/forms/d/e/1FAIpQLSdSv8utCys4WeXyfU2XV0fb3apnydPRs82NWXjYGTg_KOmZ9g/viewform">Googleフォーム</a> / 開発者: <a href="https://x.com/men_cotton">men_cotton</a></footer>
 </main>
 <script>
 const body=document.getElementById("ranking"),buttons=document.querySelectorAll("[data-sort]");let active="",ascending=false;

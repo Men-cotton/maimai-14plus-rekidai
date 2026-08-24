@@ -8,17 +8,26 @@ var QUEUE_STATE_ = {
   pending: "pending", confirmed: "confirmed", submitted: "submitted", accepted: "accepted",
   rejected: "rejected", superseded: "superseded", failed: "failed"
 };
+var BANNED_SUBMITTERS_PROPERTY_ = "BANNED_SUBMITTERS_V1";
+var BAN_SECRET_PROPERTY_ = "SUBMITTER_BAN_SECRET_V1";
+var SUBMITTER_REPUTATION_PROPERTY_ = "SUBMITTER_REPUTATION_V1";
+var SUBMITTER_REPUTATION_MIN_ = -3;
+var SUBMITTER_REPUTATION_MAX_ = 1;
 
 function onOpen() {
   SpreadsheetApp.getUi().createMenu("maimai更新")
     .addItem("初期設定・トリガー作成", "setupMaimaiIntake")
-    .addItem("差分キューを今すぐ処理", "syncMaimaiIntakeQueue").addToUi();
+    .addItem("差分キューを今すぐ処理", "syncMaimaiIntakeQueue")
+    .addSeparator()
+    .addItem("選択行の送信者をBAN", "banSelectedSubmitter")
+    .addItem("BANを解除", "unbanSubmitterPrompt").addToUi();
 }
 
 function setupMaimaiIntake() {
   var sheet = responseSheet_();
   ensureIntakeColumns_(sheet);
   ensureQueueSheet_();
+  ensureSubmitterBanSecret_();
   var config = intakeConfig_();
   var headers = headerMap_(sheet);
   [config.timestampHeader, config.emailHeader, config.csvHeader].forEach(function (header) {
@@ -29,10 +38,20 @@ function setupMaimaiIntake() {
   var hasFormTrigger = triggers.some(function (trigger) {
     return trigger.getHandlerFunction() === "handleMaimaiFormSubmit" && trigger.getTriggerSourceId() === spreadsheetId;
   });
-  var hasSyncTrigger = triggers.some(function (trigger) { return trigger.getHandlerFunction() === "syncMaimaiIntakeQueue"; });
   if (!hasFormTrigger) ScriptApp.newTrigger("handleMaimaiFormSubmit").forSpreadsheet(spreadsheetId).onFormSubmit().create();
-  if (!hasSyncTrigger) ScriptApp.newTrigger("syncMaimaiIntakeQueue").timeBased().everyMinutes(5).create();
-  SpreadsheetApp.getUi().alert("設定完了", "フォーム受付と5分ごとのキュー処理を設定しました。差分は異なる確認済みGoogleアカウントが同じ値を送るまで公開されません。", SpreadsheetApp.getUi().ButtonSet.OK);
+  replaceSyncTriggersWithDaily_(triggers);
+  try {
+    SpreadsheetApp.getUi().alert("設定完了", "フォーム受付と1日ごとのキュー処理を設定しました。差分は異なる確認済みGoogleアカウントが同じ値を送るまで公開されません。", SpreadsheetApp.getUi().ButtonSet.OK);
+  } catch (_cause) {
+    console.log("設定完了: フォーム受付と1日ごとのキュー処理を設定しました");
+  }
+}
+
+function replaceSyncTriggersWithDaily_(triggers) {
+  (triggers || []).filter(function (trigger) {
+    return trigger.getHandlerFunction() === "syncMaimaiIntakeQueue";
+  }).forEach(function (trigger) { ScriptApp.deleteTrigger(trigger); });
+  ScriptApp.newTrigger("syncMaimaiIntakeQueue").timeBased().atHour(0).everyDays(1).create();
 }
 
 function handleMaimaiFormSubmit(event) {
@@ -55,8 +74,13 @@ function syncMaimaiIntakeQueue() {
 
 function processResponseRow_(sheet, row, enforceRateLimit) {
   var headers = headerMap_(sheet);
+  var email = responseEmail_(sheet, row, headers, intakeConfig_());
+  if (email && isSubmitterBanned_(email)) return discardBannedResponse_(sheet, row, headers, email);
   var outcome = validateResponseRow_(sheet, row, enforceRateLimit);
-  if (!outcome.ok) return outcome;
+  if (!outcome.ok) {
+    if (outcome.reputationEligible) recordSubmissionReputation_(outcome.email, -1, "形式検証失敗");
+    return outcome;
+  }
   try {
     var canonical = fetchCanonicalSnapshot_();
     var queueSheet = ensureQueueSheet_();
@@ -70,8 +94,10 @@ function processResponseRow_(sheet, row, enforceRateLimit) {
       outcome.errors = outcome.errors.concat(comparison.errors);
       outcome.summary = formatOutcomeSummary_(outcome.errors, outcome.warnings);
       writeResponseOutcome_(sheet, row, headers, outcome, "差分検証失敗");
+      recordSubmissionReputation_(outcome.email, -1, "差分検証失敗");
       return outcome;
     }
+    recordSubmissionReputation_(outcome.email, 1, "有効なCSV");
     var queued = applySnapshotToQueue_(queueSheet, entries, comparison, outcome.email, row);
     outcome.pendingCount = queued.pendingCount;
     outcome.confirmedCount = queued.confirmedCount;
@@ -110,9 +136,11 @@ function validateResponseRow_(sheet, row, enforceRateLimit) {
   var headers = headerMap_(sheet);
   var errors = [];
   var warnings = [];
-  var email = String(sheet.getRange(row, requiredColumn_(headers, config.emailHeader)).getDisplayValue() || "").trim().toLowerCase();
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) errors.push("Google確認済みメールアドレスが取得できません");
-  if (enforceRateLimit && email && exceedsSubmissionRate_(sheet, row, headers, config, email)) errors.push("同じGoogleアカウントからの提出回数が上限を超えています");
+  var email = responseEmail_(sheet, row, headers, config);
+  var emailIsValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+  var rateLimited = enforceRateLimit && emailIsValid && exceedsSubmissionRate_(sheet, row, headers, config, email);
+  if (!emailIsValid) errors.push("Google確認済みメールアドレスが取得できません");
+  if (rateLimited) errors.push("同じGoogleアカウントからの提出回数が上限を超えています");
   var fileId;
   var bytes = [];
   var fileName = "";
@@ -137,7 +165,8 @@ function validateResponseRow_(sheet, row, enforceRateLimit) {
   var outcome = {
     ok: errors.length === 0, errors: errors, warnings: warnings, summary: formatOutcomeSummary_(errors, warnings),
     email: email, fileId: fileId, fileName: fileName, sha256: sha256, generatedAt: validation.generatedAt,
-    rowCount: validation.rowCount, normalizedRows: validation.normalizedRows || [], responseRow: row
+    rowCount: validation.rowCount, normalizedRows: validation.normalizedRows || [], responseRow: row,
+    reputationEligible: emailIsValid && !rateLimited
   };
   writeResponseOutcome_(sheet, row, headers, outcome, outcome.ok ? "形式検証OK" : "形式検証失敗");
   return outcome;
@@ -370,6 +399,54 @@ function writeQueueEntry_(sheet, row, entry) {
   ]]);
 }
 
+function purgeSubmitterVotesFromQueue_(queueSheet, email) {
+  var canonicalEmail = canonicalSubmitterEmail_(email);
+  var quorum = intakeConfig_().consensusQuorum;
+  var result = { changed: 0, rejected: 0, downgraded: 0, submittedPullRequests: [] };
+  readQueueEntries_(queueSheet).forEach(function (entry) {
+    if ([QUEUE_STATE_.pending, QUEUE_STATE_.confirmed].indexOf(entry.state) < 0) {
+      if (entry.state === QUEUE_STATE_.submitted && entry.voters.some(function (voter) { return canonicalSubmitterEmail_(voter) === canonicalEmail; }) && entry.pullRequestUrl) {
+        result.submittedPullRequests.push(entry.pullRequestUrl);
+      }
+      return;
+    }
+    var voters = entry.voters.filter(function (voter) { return canonicalSubmitterEmail_(voter) !== canonicalEmail; });
+    if (voters.length === entry.voters.length) return;
+    var state = voters.length >= quorum ? QUEUE_STATE_.confirmed : voters.length ? QUEUE_STATE_.pending : QUEUE_STATE_.rejected;
+    updateQueueEntry_(queueSheet, entry, {
+      voters: voters, state: state,
+      note: state === QUEUE_STATE_.rejected ? "BAN対象の確認票を除外したため取下げ" : "BAN対象の確認票を除外して再照合待ち"
+    });
+    result.changed += 1;
+    if (state === QUEUE_STATE_.rejected) result.rejected += 1;
+    else if (state === QUEUE_STATE_.pending) result.downgraded += 1;
+  });
+  result.submittedPullRequests = unique_(result.submittedPullRequests);
+  return result;
+}
+
+function cancelSubmittedPullRequests_(queueSheet, pullRequestUrls) {
+  var result = { closed: 0, merged: 0, errors: [] };
+  if (!pullRequestUrls.length) return result;
+  var config = githubConfig_();
+  var token = githubInstallationToken_(config);
+  var prefix = "/repos/" + encodeURIComponent(config.owner) + "/" + encodeURIComponent(config.repository);
+  pullRequestUrls.forEach(function (url) {
+    try {
+      var match = String(url || "").match(/^https:\/\/github\.com\/Men-cotton\/maimai-14plus-rekidai\/pull\/(\d+)$/);
+      if (!match) throw new Error("PR URLが不正です");
+      var pull = githubRequest_("get", prefix + "/pulls/" + match[1], null, token);
+      if (pull.merged_at) { result.merged += 1; return; }
+      if (pull.state === "open") githubRequest_("patch", prefix + "/pulls/" + match[1], { state: "closed" }, token);
+      readQueueEntries_(queueSheet).filter(function (entry) { return entry.pullRequestUrl === url; }).forEach(function (entry) {
+        updateQueueEntry_(queueSheet, entry, { state: QUEUE_STATE_.failed, note: "BANによりPRを停止" });
+      });
+      result.closed += 1;
+    } catch (cause) { result.errors.push(url + ": " + safeMessage_(cause && cause.message)); }
+  });
+  return result;
+}
+
 function markResponseRowsForPullRequest_(entries, pullRequestUrl) {
   var sheet = responseSheet_();
   ensureIntakeColumns_(sheet);
@@ -421,6 +498,165 @@ function headerMap_(sheet) {
 }
 function requiredColumn_(headers, name) { if (!headers[name]) throw new Error("回答列がありません: " + name); return headers[name]; }
 
+function responseEmail_(sheet, row, headers, config) {
+  return canonicalSubmitterEmail_(sheet.getRange(row, requiredColumn_(headers, config.emailHeader)).getDisplayValue());
+}
+
+function discardBannedResponse_(sheet, row, headers, email) {
+  var config = intakeConfig_();
+  try {
+    var fileId = uploadedFileId_(sheet.getRange(row, requiredColumn_(headers, config.csvHeader)));
+    DriveApp.getFileById(fileId).setTrashed(true);
+  } catch (ignored) {}
+  var outcome = {
+    ok: true, blocked: true, errors: [], warnings: [], summary: "送信を受け付けました。",
+    email: email, fileId: "", fileName: "", sha256: "", generatedAt: "", rowCount: 0,
+    normalizedRows: [], responseRow: row, pendingCount: 0, confirmedCount: 0
+  };
+  writeResponseOutcome_(sheet, row, headers, outcome, "受付対象外");
+  return outcome;
+}
+
+function canonicalSubmitterEmail_(email) { return String(email || "").trim().toLowerCase(); }
+
+function ensureSubmitterBanSecret_() {
+  var properties = PropertiesService.getScriptProperties();
+  var secret = properties.getProperty(BAN_SECRET_PROPERTY_);
+  if (!secret) {
+    secret = Utilities.getUuid() + Utilities.getUuid();
+    properties.setProperty(BAN_SECRET_PROPERTY_, secret);
+  }
+  return secret;
+}
+
+function submitterBanHash_(email) {
+  var canonicalEmail = canonicalSubmitterEmail_(email);
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(canonicalEmail)) throw new Error("メールアドレスが不正です");
+  return bytesToHex_(Utilities.computeHmacSha256Signature(canonicalEmail, ensureSubmitterBanSecret_(), Utilities.Charset.UTF_8));
+}
+
+function readBannedSubmitters_() {
+  var raw = PropertiesService.getScriptProperties().getProperty(BANNED_SUBMITTERS_PROPERTY_) || "{}";
+  var parsed;
+  try { parsed = JSON.parse(raw); } catch (cause) { throw new Error("BAN設定を読み取れません"); }
+  if (!parsed || Array.isArray(parsed) || typeof parsed !== "object") throw new Error("BAN設定の形式が不正です");
+  return parsed;
+}
+
+function isSubmitterBanned_(email) { return Boolean(readBannedSubmitters_()[submitterBanHash_(email)]); }
+
+function readSubmitterReputations_() {
+  var raw = PropertiesService.getScriptProperties().getProperty(SUBMITTER_REPUTATION_PROPERTY_) || "{}";
+  var parsed;
+  try { parsed = JSON.parse(raw); } catch (cause) { throw new Error("信頼点設定を読み取れません"); }
+  if (!parsed || Array.isArray(parsed) || typeof parsed !== "object") throw new Error("信頼点設定の形式が不正です");
+  return parsed;
+}
+
+function submitterReputation_(email) {
+  var record = readSubmitterReputations_()[submitterBanHash_(email)];
+  var score = record && Number(record.score);
+  return Number.isInteger(score) ? Math.max(SUBMITTER_REPUTATION_MIN_, Math.min(SUBMITTER_REPUTATION_MAX_, score)) : 0;
+}
+
+function updateSubmitterReputation_(email, delta, reason) {
+  if (delta !== 1 && delta !== -1) throw new Error("信頼点の増減値が不正です");
+  var registry = readSubmitterReputations_();
+  var hash = submitterBanHash_(email);
+  var current = submitterReputation_(email);
+  var score = Math.max(SUBMITTER_REPUTATION_MIN_, Math.min(SUBMITTER_REPUTATION_MAX_, current + delta));
+  registry[hash] = {
+    score: score, updatedAt: Utilities.formatDate(new Date(), "Asia/Tokyo", "yyyy/MM/dd HH:mm:ss"),
+    lastReason: String(reason || "").slice(0, 200)
+  };
+  PropertiesService.getScriptProperties().setProperty(SUBMITTER_REPUTATION_PROPERTY_, JSON.stringify(registry));
+  return score;
+}
+
+function resetSubmitterReputation_(email) {
+  var registry = readSubmitterReputations_();
+  var hash = submitterBanHash_(email);
+  registry[hash] = {
+    score: 0, updatedAt: Utilities.formatDate(new Date(), "Asia/Tokyo", "yyyy/MM/dd HH:mm:ss"),
+    lastReason: "BAN解除"
+  };
+  PropertiesService.getScriptProperties().setProperty(SUBMITTER_REPUTATION_PROPERTY_, JSON.stringify(registry));
+}
+
+function recordSubmissionReputation_(email, delta, reason) {
+  var score = updateSubmitterReputation_(email, delta, reason);
+  var autoBanned = false;
+  if (score <= SUBMITTER_REPUTATION_MIN_ && !isSubmitterBanned_(email)) {
+    banSubmitter_(email, "信頼点が-3に到達: " + String(reason || ""));
+    autoBanned = true;
+    try { quarantineBannedSubmitter_(email); }
+    catch (cause) {
+      try { notifySystemFailure_("自動BAN後のキュー整理に失敗しました: " + safeMessage_(cause && cause.message)); } catch (ignored) {}
+    }
+  }
+  return { score: score, autoBanned: autoBanned };
+}
+
+function banSubmitter_(email, reason) {
+  var registry = readBannedSubmitters_();
+  var hash = submitterBanHash_(email);
+  registry[hash] = {
+    addedAt: Utilities.formatDate(new Date(), "Asia/Tokyo", "yyyy/MM/dd HH:mm:ss"),
+    reason: String(reason || "").slice(0, 500)
+  };
+  PropertiesService.getScriptProperties().setProperty(BANNED_SUBMITTERS_PROPERTY_, JSON.stringify(registry));
+  return hash;
+}
+
+function unbanSubmitter_(email) {
+  var registry = readBannedSubmitters_();
+  var hash = submitterBanHash_(email);
+  if (!registry[hash]) return false;
+  delete registry[hash];
+  PropertiesService.getScriptProperties().setProperty(BANNED_SUBMITTERS_PROPERTY_, JSON.stringify(registry));
+  resetSubmitterReputation_(email);
+  return true;
+}
+
+function quarantineBannedSubmitter_(email) {
+  var queueSheet = ensureQueueSheet_();
+  var purged = purgeSubmitterVotesFromQueue_(queueSheet, email);
+  var cancelled = cancelSubmittedPullRequests_(queueSheet, purged.submittedPullRequests);
+  return { purged: purged, cancelled: cancelled };
+}
+
+function banSelectedSubmitter() {
+  var ui = SpreadsheetApp.getUi();
+  var range = SpreadsheetApp.getActiveRange();
+  if (!range || range.getRow() < 2) return ui.alert("Googleフォームの回答行を1行選択してください。");
+  var sheet = range.getSheet();
+  var headers = headerMap_(sheet);
+  var config = intakeConfig_();
+  var email = responseEmail_(sheet, range.getRow(), headers, config);
+  if (!email) return ui.alert("選択行からメールアドレスを取得できません。");
+  if (ui.alert("送信者をBAN", email + " をBANしますか？", ui.ButtonSet.YES_NO) !== ui.Button.YES) return;
+  var lock = LockService.getDocumentLock();
+  lock.waitLock(20000);
+  try {
+    banSubmitter_(email, "回答行 " + range.getRow());
+    var quarantine = quarantineBannedSubmitter_(email);
+    var purged = quarantine.purged;
+    var cancelled = quarantine.cancelled;
+    var message = "BANしました。以後の提出は処理されません。\nキュー更新: " + purged.changed + "件 / 停止PR: " + cancelled.closed + "件";
+    if (cancelled.merged) message += "\n既にマージ済みのPR: " + cancelled.merged + "件";
+    if (cancelled.errors.length) message += "\nWARN: " + cancelled.errors.join("\n");
+    ui.alert(message);
+  } finally { lock.releaseLock(); }
+}
+
+function unbanSubmitterPrompt() {
+  var ui = SpreadsheetApp.getUi();
+  var prompt = ui.prompt("BANを解除", "Googleアカウントのメールアドレス", ui.ButtonSet.OK_CANCEL);
+  if (prompt.getSelectedButton() !== ui.Button.OK) return;
+  var email = canonicalSubmitterEmail_(prompt.getResponseText());
+  ui.alert(unbanSubmitter_(email) ? "BANを解除しました。" : "該当するBANはありません。");
+}
+
 function uploadedFileId_(range) {
   var links = [];
   var rich = range.getRichTextValue();
@@ -453,6 +689,7 @@ function hasPriorHash_(sheet, row, headers, sha256) {
 }
 
 function notifyOwner_(sheet, row, outcome) {
+  if (outcome.blocked) return;
   var recipient = intakeConfig_().ownerEmail;
   if (!recipient || (outcome.ok && !outcome.pullRequestUrl)) return;
   var subject = outcome.ok ? "[maimai歴代表] 確定差分のPRを作成しました" : "[maimai歴代表] CSV受付エラー";
@@ -569,5 +806,6 @@ function positiveInteger_(value, fallback, minimum) {
   return Number.isInteger(parsed) && parsed >= minimum ? parsed : fallback;
 }
 function sha256Hex_(bytes) {
-  return Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, bytes).map(function (value) { return ((value + 256) % 256).toString(16).padStart(2, "0"); }).join("");
+  return bytesToHex_(Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, bytes));
 }
+function bytesToHex_(bytes) { return bytes.map(function (value) { return ((value + 256) % 256).toString(16).padStart(2, "0"); }).join(""); }

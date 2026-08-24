@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHmac } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import test from "node:test";
@@ -9,12 +10,19 @@ import { hasErrors, validateCandidateCsv } from "../scripts/lib/validation.mjs";
 const root = resolve(import.meta.dirname, "..");
 const validatorSource = await readFile(resolve(root, "intake/google-form/Validation.gs"), "utf8");
 const codeSource = await readFile(resolve(root, "intake/google-form/Code.gs"), "utf8");
+const scriptProperties = new Map([["CONSENSUS_QUORUM", "2"]]);
 const sandbox = {
   PropertiesService: {
-    getScriptProperties: () => ({ getProperty: (name) => name === "CONSENSUS_QUORUM" ? "2" : null }),
+    getScriptProperties: () => ({
+      getProperty: (name) => scriptProperties.get(name) ?? null,
+      setProperty: (name, value) => { scriptProperties.set(name, String(value)); },
+    }),
   },
   Utilities: {
     formatDate: () => "2026/08/25 00:00:00",
+    getUuid: () => "11111111-2222-4333-8444-555555555555",
+    Charset: { UTF_8: "UTF-8" },
+    computeHmacSha256Signature: (value, key) => [...createHmac("sha256", key).update(value).digest()],
   },
 };
 vm.createContext(sandbox);
@@ -38,6 +46,26 @@ const base = {
 test("Googleフォーム受付コードを構文解析できる", () => {
   assert.doesNotThrow(() => new Function(codeSource));
   assert.doesNotThrow(() => JSON.parse(requireManifest()));
+});
+
+test("旧5分トリガーを削除して日次トリガーへ置換", () => {
+  const legacy = { getHandlerFunction: () => "syncMaimaiIntakeQueue" };
+  const unrelated = { getHandlerFunction: () => "anotherHandler" };
+  const deleted = [];
+  const schedule = [];
+  const chain = {
+    timeBased: () => { schedule.push("timeBased"); return chain; },
+    atHour: (hour) => { schedule.push(["atHour", hour]); return chain; },
+    everyDays: (days) => { schedule.push(["everyDays", days]); return chain; },
+    create: () => { schedule.push("create"); return chain; },
+  };
+  sandbox.ScriptApp = {
+    deleteTrigger: (trigger) => deleted.push(trigger),
+    newTrigger: (handler) => { schedule.push(["handler", handler]); return chain; },
+  };
+  sandbox.replaceSyncTriggersWithDaily_([legacy, unrelated]);
+  assert.deepEqual(deleted, [legacy]);
+  assert.deepEqual(schedule, [["handler", "syncMaimaiIntakeQueue"], "timeBased", ["atHour", 0], ["everyDays", 1], "create"]);
 });
 
 test("受付側でも正常なCSVを検証できる", () => {
@@ -105,6 +133,86 @@ test("同じGoogleアカウントの再提出だけでは確定しない", () =>
   const current = sandbox.readQueueEntries_(sheet).find((entry) => entry.state === "pending");
   assert.ok(current);
   assert.equal(current.voters.length, 1);
+});
+
+test("BAN対象は正規化され、メールアドレスを平文保存しない", () => {
+  sandbox.banSubmitter_(" Bad.Actor@Example.COM ", "test");
+  assert.equal(sandbox.isSubmitterBanned_("bad.actor@example.com"), true);
+  const stored = scriptProperties.get("BANNED_SUBMITTERS_V1");
+  assert.ok(stored);
+  assert.equal(stored.includes("bad.actor@example.com"), false);
+  assert.equal(sandbox.unbanSubmitter_("BAD.ACTOR@example.com"), true);
+  assert.equal(sandbox.isSubmitterBanned_("bad.actor@example.com"), false);
+});
+
+test("信頼点は初期値0、上限1で提出ごとに1だけ増減", () => {
+  const email = "reputation@example.com";
+  assert.equal(sandbox.submitterReputation_(email), 0);
+  assert.equal(sandbox.updateSubmitterReputation_(email, 1, "valid"), 1);
+  assert.equal(sandbox.updateSubmitterReputation_(email, 1, "valid"), 1);
+  assert.equal(sandbox.updateSubmitterReputation_(email, -1, "invalid"), 0);
+  assert.equal(sandbox.updateSubmitterReputation_(email, -1, "invalid"), -1);
+  const stored = scriptProperties.get("SUBMITTER_REPUTATION_V1");
+  assert.equal(stored.includes(email), false);
+});
+
+test("信頼点が-3に到達した瞬間に自動BANし、解除時は0へ戻す", () => {
+  const email = "auto-ban@example.com";
+  const originalQuarantine = sandbox.quarantineBannedSubmitter_;
+  let quarantineCount = 0;
+  sandbox.quarantineBannedSubmitter_ = () => { quarantineCount += 1; return {}; };
+  assert.deepEqual({ ...sandbox.recordSubmissionReputation_(email, -1, "invalid") }, { score: -1, autoBanned: false });
+  assert.deepEqual({ ...sandbox.recordSubmissionReputation_(email, -1, "invalid") }, { score: -2, autoBanned: false });
+  assert.deepEqual({ ...sandbox.recordSubmissionReputation_(email, -1, "invalid") }, { score: -3, autoBanned: true });
+  assert.equal(sandbox.isSubmitterBanned_(email), true);
+  assert.equal(quarantineCount, 1);
+  assert.equal(sandbox.unbanSubmitter_(email), true);
+  assert.equal(sandbox.isSubmitterBanned_(email), false);
+  assert.equal(sandbox.submitterReputation_(email), 0);
+  sandbox.quarantineBannedSubmitter_ = originalQuarantine;
+});
+
+test("BAN時に未確定キューから同アカウントの確認票を除外", () => {
+  const baseline = [{ ...base, score: 270, rate: 90 }];
+  const candidate = [{ ...base, score: 273, rate: 91, achievedAt: "2026/08/21 12:00" }];
+  const comparison = sandbox.compareMaimaiSnapshot_(baseline, candidate);
+  const sheet = new FakeQueueSheet(sandbox.QUEUE_COLUMNS_);
+  sandbox.applySnapshotToQueue_(sheet, [], comparison, "bad@example.com", 2);
+  sandbox.applySnapshotToQueue_(sheet, sandbox.readQueueEntries_(sheet), comparison, "good@example.com", 3);
+
+  const first = sandbox.purgeSubmitterVotesFromQueue_(sheet, "bad@example.com");
+  let entry = sandbox.readQueueEntries_(sheet).find((candidateEntry) => candidateEntry.state === "pending");
+  assert.equal(first.downgraded, 1);
+  assert.deepEqual([...entry.voters], ["good@example.com"]);
+
+  const second = sandbox.purgeSubmitterVotesFromQueue_(sheet, "good@example.com");
+  entry = sandbox.readQueueEntries_(sheet)[0];
+  assert.equal(second.rejected, 1);
+  assert.equal(entry.state, "rejected");
+  assert.deepEqual([...entry.voters], []);
+});
+
+test("BAN対象が確認に使われた未マージPRを停止", () => {
+  const sheet = new FakeQueueSheet(sandbox.QUEUE_COLUMNS_);
+  const pullRequestUrl = "https://github.com/Men-cotton/maimai-14plus-rekidai/pull/99";
+  sandbox.appendQueueEntry_(sheet, {
+    key: "MASTER\u0000Test Song\u0000DX", fingerprint: "candidate", candidate: base,
+    voters: ["bad@example.com", "good@example.com"], state: "submitted",
+    firstResponseRow: 2, lastResponseRow: 3, pullRequestUrl, note: "test",
+  });
+  const requests = [];
+  sandbox.githubConfig_ = () => ({ owner: "Men-cotton", repository: "maimai-14plus-rekidai" });
+  sandbox.githubInstallationToken_ = () => "test-token";
+  sandbox.githubRequest_ = (method, path, body) => {
+    requests.push({ method, path, body });
+    return method === "get" ? { state: "open", merged_at: null } : {};
+  };
+
+  const result = sandbox.cancelSubmittedPullRequests_(sheet, [pullRequestUrl]);
+  assert.equal(result.closed, 1);
+  assert.equal(result.errors.length, 0);
+  assert.ok(requests.some((request) => request.method === "patch" && request.body.state === "closed"));
+  assert.equal(sandbox.readQueueEntries_(sheet)[0].state, "failed");
 });
 
 test("確定差分から合成するCSVはGitHub側の検証にも合格する", () => {
