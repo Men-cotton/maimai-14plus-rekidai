@@ -62,6 +62,7 @@ ERRORが1件でもあればPRは失敗し、サイトは更新されません。
 - PR用ワークフローは `contents: read` のみで、秘密情報を使用しません。
 - 公開処理は `main` へのマージ後だけ実行し、GitHub Pages以外へ書き込みません。
 - 外部Actionは完全なコミットSHAに固定しています。
+- DependabotのAction更新PRも同じテストと保守者確認を通します。
 - サイトはビルド済み静的HTML/JSONだけで、maimai DX NETのCookieを含みません。
 
 ## ローカル確認

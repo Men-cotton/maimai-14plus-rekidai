@@ -15,7 +15,8 @@ const changes = output.trim().split(/\r?\n/).filter(Boolean).map((line) => {
 const updateChanges = changes.filter(({ path }) => path.startsWith("data/updates/"));
 
 if (!updateChanges.length) {
-  if (actor.toLowerCase() !== "men-cotton") throw new Error("一般のPRでは data/updates/ にCSVを1件だけ追加できます");
+  const maintenanceActors = new Set(["men-cotton", "dependabot[bot]"]);
+  if (!maintenanceActors.has(actor.toLowerCase())) throw new Error("一般のPRでは data/updates/ にCSVを1件だけ追加できます");
   console.log("Maintainer PR without a ranking CSV; trusted CSV check is not required.");
   process.exit(0);
 }

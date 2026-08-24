@@ -14,7 +14,7 @@ const changes = output.trim().split(/\r?\n/).filter(Boolean).map((line) => {
 const updateChanges = changes.filter(({ path }) => path.startsWith("data/updates/"));
 
 if (!updateChanges.length) {
-  if (actor.toLowerCase() !== "men-cotton") {
+  if (!["men-cotton", "dependabot[bot]"].includes(actor.toLowerCase())) {
     throw new Error("一般のPRでは data/updates/ にCSVを1件だけ追加できます");
   }
   console.log("Maintainer PR: repository tests and build will validate the changes.");
