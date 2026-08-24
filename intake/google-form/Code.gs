@@ -31,11 +31,11 @@ function setupMaimaiIntake() {
   });
   var hasSyncTrigger = triggers.some(function (trigger) { return trigger.getHandlerFunction() === "syncMaimaiIntakeQueue"; });
   if (!hasFormTrigger) ScriptApp.newTrigger("handleMaimaiFormSubmit").forSpreadsheet(spreadsheetId).onFormSubmit().create();
-  if (!hasSyncTrigger) ScriptApp.newTrigger("syncMaimaiIntakeQueue").timeBased().everyMinutes(5).create();
+  if (!hasSyncTrigger) ScriptApp.newTrigger("syncMaimaiIntakeQueue").timeBased().atHour(0).everyDays(1).create();
   try {
-    SpreadsheetApp.getUi().alert("設定完了", "フォーム受付と5分ごとのキュー処理を設定しました。差分は異なる確認済みGoogleアカウントが同じ値を送るまで公開されません。", SpreadsheetApp.getUi().ButtonSet.OK);
+    SpreadsheetApp.getUi().alert("設定完了", "フォーム受付と1日ごとのキュー処理を設定しました。差分は異なる確認済みGoogleアカウントが同じ値を送るまで公開されません。", SpreadsheetApp.getUi().ButtonSet.OK);
   } catch (_cause) {
-    console.log("設定完了: フォーム受付と5分ごとのキュー処理を設定しました");
+    console.log("設定完了: フォーム受付と1日ごとのキュー処理を設定しました");
   }
 }
 

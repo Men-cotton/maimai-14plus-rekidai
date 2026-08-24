@@ -7,7 +7,7 @@ maimai DX NETから取得した難易度14+の歴代表です。
 
 ## データ提供
 
-取得スクリプトで生成したCSVを、ファイル名・内容を変えずにGoogleフォームへ送信してください。Googleへのログインが必要です。
+取得スクリプトで生成したCSVを、ファイル名・内容を変えずに[Googleフォーム](https://docs.google.com/forms/d/e/1FAIpQLSdSv8utCys4WeXyfU2XV0fb3apnydPRs82NWXjYGTg_KOmZ9g/viewform)へ送信してください。Googleへのログインが必要です。
 
 新しい記録は、別のGoogleアカウントから同じ譜面差分が確認された後に反映されます。
 
