@@ -48,6 +48,26 @@ test("Googleフォーム受付コードを構文解析できる", () => {
   assert.doesNotThrow(() => JSON.parse(requireManifest()));
 });
 
+test("旧5分トリガーを削除して日次トリガーへ置換", () => {
+  const legacy = { getHandlerFunction: () => "syncMaimaiIntakeQueue" };
+  const unrelated = { getHandlerFunction: () => "anotherHandler" };
+  const deleted = [];
+  const schedule = [];
+  const chain = {
+    timeBased: () => { schedule.push("timeBased"); return chain; },
+    atHour: (hour) => { schedule.push(["atHour", hour]); return chain; },
+    everyDays: (days) => { schedule.push(["everyDays", days]); return chain; },
+    create: () => { schedule.push("create"); return chain; },
+  };
+  sandbox.ScriptApp = {
+    deleteTrigger: (trigger) => deleted.push(trigger),
+    newTrigger: (handler) => { schedule.push(["handler", handler]); return chain; },
+  };
+  sandbox.replaceSyncTriggersWithDaily_([legacy, unrelated]);
+  assert.deepEqual(deleted, [legacy]);
+  assert.deepEqual(schedule, [["handler", "syncMaimaiIntakeQueue"], "timeBased", ["atHour", 0], ["everyDays", 1], "create"]);
+});
+
 test("受付側でも正常なCSVを検証できる", () => {
   const result = sandbox.validateMaimaiUpload_("maimai-14plus-dxscore-rank1-20260824-2115.csv", rowsToCsv([base]));
   assert.equal(result.ok, true);
