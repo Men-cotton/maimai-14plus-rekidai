@@ -1,7 +1,5 @@
 # Security Policy
 
-脆弱性またはランキングCSVに含まれるべきでない情報を発見した場合は、公開Issueへ秘密情報を書かず、GitHubのPrivate vulnerability reportingを利用してください。
+脆弱性や意図しない情報の公開を発見した場合は、公開IssueではなくGitHubのPrivate vulnerability reportingを利用してください。
 
-このリポジトリや公開サイトへmaimai DX NETのCookie、セッション情報、パスワード、アクセストークンを追加しないでください。
-
-Googleフォームで収集する確認済みメールアドレスは、異なるアカウントから同じ譜面差分が届いたかの判定と提出回数制限にだけ使います。回答Sheetと差分キューを公開せず、CSV、GitHub Pull Request、ログ、公開サイトへメールアドレスを転記しないでください。GitHub Appの秘密鍵はApps Scriptのスクリプト プロパティだけに保存します。
+Googleフォームで収集したメールアドレスは差分照合にのみ使用し、公開しません。
