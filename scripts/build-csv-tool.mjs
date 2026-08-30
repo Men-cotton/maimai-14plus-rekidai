@@ -27,6 +27,7 @@ export async function buildCsvTool(outputDir) {
 <body><main>
   <h1>maimai 14+ でらっくスコア1位取得</h1>
   <p>下の紫色ボタンをブックマークバーへドラッグしてください。</p>
+  <p>登録済みの場合も、更新時は同じボタンから登録し直してください。</p>
   <a class="bookmark" href="${bookmarklet}">maimai 14+ 1位CSV</a>
   <ol>
     <li><code>maimaidx.jp</code> にログインします。</li>

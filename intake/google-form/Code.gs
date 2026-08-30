@@ -77,6 +77,11 @@ function processResponseRow_(sheet, row, enforceRateLimit) {
   var email = responseEmail_(sheet, row, headers, intakeConfig_());
   if (email && isSubmitterBanned_(email)) return discardBannedResponse_(sheet, row, headers, email);
   var outcome = validateResponseRow_(sheet, row, enforceRateLimit);
+  return processValidatedResponseRow_(sheet, row, outcome);
+}
+
+function processValidatedResponseRow_(sheet, row, outcome) {
+  var headers = headerMap_(sheet);
   if (!outcome.ok) {
     if (outcome.reputationEligible) recordSubmissionReputation_(outcome.email, -1, "形式検証失敗");
     return outcome;
@@ -234,6 +239,83 @@ function repairMaimaiFilenameRejectionsUnlocked_(sheet) {
     });
   }
   return report;
+}
+
+// Operator-only recovery after independently checking the same chart/player/
+// score on DX NET. Never infer a missing date from the baseline automatically.
+// The original Drive upload and its hash remain unchanged for the audit trail.
+function repairMaimaiMissingDate_(sheet, row, expectedHash, verifiedRow) {
+  var lock = LockService.getDocumentLock();
+  lock.waitLock(20000);
+  try {
+    var config = intakeConfig_();
+    var headers = headerMap_(sheet);
+    var value = function (column) { return sheet.getRange(row, requiredColumn_(headers, column)).getDisplayValue(); };
+    var properties = PropertiesService.getScriptProperties();
+    var property = "MISSING_DATE_REPAIRS_V1";
+    var journal = JSON.parse(properties.getProperty(property) || "{}");
+    var key = sheet.getSheetId() + ":" + row + ":" + expectedHash;
+    if (journal[key]) throw new Error("この投稿の日時補正は既に開始済みです");
+    if (!Number.isInteger(row) || row < 2 || row > sheet.getLastRow() ||
+        !/^[a-f0-9]{64}$/.test(expectedHash) || value(INTAKE_COLUMNS_.sha256) !== expectedHash ||
+        value(INTAKE_COLUMNS_.status) !== "形式検証失敗" || value(INTAKE_COLUMNS_.pullRequest) ||
+        Number(value(INTAKE_COLUMNS_.pending)) !== 0 || Number(value(INTAKE_COLUMNS_.confirmed)) !== 0) {
+      throw new Error("日時補正の対象投稿と一致しません");
+    }
+    var email = responseEmail_(sheet, row, headers, config);
+    var reputation = readSubmitterReputations_()[submitterBanHash_(email)];
+    var submissions = 0;
+    for (var index = 2; index <= sheet.getLastRow(); index += 1) {
+      if (responseEmail_(sheet, index, headers, config) === email) submissions += 1;
+    }
+    if (submissions !== 1 || isSubmitterBanned_(email) || !reputation || reputation.score !== -1 || reputation.lastReason !== "形式検証失敗") {
+      throw new Error("他の投稿・信頼点・BAN履歴があるため自動補正できません");
+    }
+    var fileId = uploadedFileId_(sheet.getRange(row, requiredColumn_(headers, config.csvHeader)));
+    var file = DriveApp.getFileById(fileId);
+    var bytes = file.getBlob().getBytes();
+    if (bytes.length > config.maxBytes || sha256Hex_(bytes) !== expectedHash) throw new Error("元のCSVと一致しません");
+    var fileName = canonicalMaimaiUploadFileName_(file.getName());
+    var csv = Utilities.newBlob(bytes).getDataAsString("UTF-8").replace(/^\uFEFF/, "");
+    var parsed = parseMaimaiCsv_(csv);
+    var original = validateMaimaiUpload_(fileName, csv);
+    var matches = parsed.records.filter(function (record) {
+      return record["難易度"] === verifiedRow.difficulty && record["譜面種別"] === verifiedRow.chartType && record["曲名"] === verifiedRow.song;
+    });
+    if (matches.length !== 1) throw new Error("確認済み譜面と一致しません");
+    var record = matches[0];
+    var line = parsed.records.indexOf(record) + 2;
+    if (record["達成日時"] !== "" || integer_(record["1位でらっくスコア"]) !== verifiedRow.score ||
+        integer_(record["理論値"]) !== verifiedRow.maxScore || integer_(record["DXスター"]) !== verifiedRow.dxStar ||
+        record["プレイヤー"] !== verifiedRow.player || parseMaimaiDate_(verifiedRow.achievedAt) === null ||
+        original.errors.length !== 1 || original.errors[0] !== line + "行目: DATEの形式または実在日が不正です") {
+      throw new Error("日時欠落だけの不具合ではないか、確認済み記録と一致しません");
+    }
+    record["達成日時"] = verifiedRow.achievedAt;
+    var fixedCsv = [parsed.headers].concat(parsed.records.map(function (item) {
+      return parsed.headers.map(function (header) { return item[header]; });
+    })).map(function (cells) {
+      return cells.map(function (cell) { return '"' + String(cell).replace(/"/g, '""') + '"'; }).join(",");
+    }).join("\r\n");
+    var outcome = validateMaimaiUpload_(fileName, fixedCsv);
+    if (!outcome.ok) throw new Error("日時補正後もCSV検証に失敗しました");
+    outcome.email = email;
+    outcome.fileId = fileId;
+    outcome.sha256 = expectedHash;
+    outcome.responseRow = row;
+    outcome.reputationEligible = true;
+    outcome.warnings.push("取得スクリプトの日時欠落を確認済みの値で補正: " + chartKeyForRow_(verifiedRow) + " / " + verifiedRow.achievedAt + "（原本CSVは保持）");
+    outcome.summary = formatOutcomeSummary_(outcome.errors, outcome.warnings);
+    // Persist before refund/replay; an interrupted attempt needs operator review.
+    journal[key] = { state: "started", chart: chartKeyForRow_(verifiedRow), date: verifiedRow.achievedAt };
+    properties.setProperty(property, JSON.stringify(journal));
+    updateSubmitterReputation_(email, 1, "取得スクリプトの日時欠落による誤減点を取消");
+    var result = processValidatedResponseRow_(sheet, row, outcome);
+    journal[key].state = "completed";
+    properties.setProperty(property, JSON.stringify(journal));
+    return { row: row, ok: result.ok, status: value(INTAKE_COLUMNS_.status), score: submitterReputation_(email),
+      pending: result.pendingCount || 0, confirmed: result.confirmedCount || 0, summary: result.summary };
+  } finally { lock.releaseLock(); }
 }
 
 function applySnapshotToQueue_(queueSheet, entries, comparison, email, responseRow) {
