@@ -147,10 +147,10 @@ function validateResponseRow_(sheet, row, enforceRateLimit) {
   try {
     fileId = uploadedFileId_(sheet.getRange(row, requiredColumn_(headers, config.csvHeader)));
     var file = DriveApp.getFileById(fileId);
-    fileName = file.getName();
+    fileName = canonicalMaimaiUploadFileName_(file.getName());
     bytes = file.getBlob().getBytes();
     if (bytes.length > config.maxBytes) errors.push("CSVが" + config.maxBytes + "バイトを超えています");
-  } catch (cause) { errors.push("アップロードされたCSVを読み取れません: " + safeMessage_(cause && cause.message)); }
+  } catch (_cause) { errors.push("アップロードされたCSVを読み取れません"); }
   var validation = { errors: [], warnings: [], generatedAt: "", rowCount: 0, normalizedRows: [] };
   var sha256 = "";
   if (bytes.length && !errors.length) {
@@ -170,6 +170,70 @@ function validateResponseRow_(sheet, row, enforceRateLimit) {
   };
   writeResponseOutcome_(sheet, row, headers, outcome, outcome.ok ? "形式検証OK" : "形式検証失敗");
   return outcome;
+}
+
+// One-time, guarded recovery for the old filename-only rejection. Accounts
+// with any other submission/history require manual review: don't guess how
+// to reverse capped reputation history or automatically remove a BAN.
+function repairMaimaiFilenameRejections() {
+  var lock = LockService.getDocumentLock();
+  lock.waitLock(20000);
+  try {
+    var report = repairMaimaiFilenameRejectionsUnlocked_(responseSheet_());
+    console.log(JSON.stringify(report)); // Row numbers/results only; no names or email addresses.
+    return report;
+  } finally { lock.releaseLock(); }
+}
+
+function repairMaimaiFilenameRejectionsUnlocked_(sheet) {
+  var config = intakeConfig_();
+  var headers = headerMap_(sheet);
+  var properties = PropertiesService.getScriptProperties();
+  var journalKey = "FILENAME_REJECTION_REPAIRS_V1";
+  var journal = JSON.parse(properties.getProperty(journalKey) || "{}");
+  var rowsByEmail = {};
+  var report = [];
+  for (var row = 2; row <= sheet.getLastRow(); row += 1) {
+    var email = responseEmail_(sheet, row, headers, config);
+    if (email) rowsByEmail[email] = (rowsByEmail[email] || 0) + 1;
+  }
+  for (var row = 2; row <= sheet.getLastRow(); row += 1) {
+    var value = function (column) { return sheet.getRange(row, requiredColumn_(headers, column)).getDisplayValue(); };
+    if (value(INTAKE_COLUMNS_.status) !== "形式検証失敗" ||
+        value(INTAKE_COLUMNS_.result).trim() !== "ERROR: CSVのファイル名が規定形式ではありません") continue;
+    var hash = value(INTAKE_COLUMNS_.sha256);
+    var key = sheet.getSheetId() + ":" + row + ":" + hash;
+    var email = responseEmail_(sheet, row, headers, config);
+    var reputation = readSubmitterReputations_()[submitterBanHash_(email)];
+    if (journal[key] || rowsByEmail[email] !== 1 || isSubmitterBanned_(email) ||
+        !reputation || reputation.score !== -1 || reputation.lastReason !== "形式検証失敗" ||
+        !/^[a-f0-9]{64}$/.test(hash) || value(INTAKE_COLUMNS_.pullRequest) ||
+        Number(value(INTAKE_COLUMNS_.pending)) !== 0 || Number(value(INTAKE_COLUMNS_.confirmed)) !== 0) {
+      report.push({ row: row, status: "補正条件に合わないためスキップ" });
+      continue;
+    }
+    var file = DriveApp.getFileById(uploadedFileId_(sheet.getRange(row, requiredColumn_(headers, config.csvHeader))));
+    var originalName = file.getName();
+    var canonicalName = canonicalMaimaiUploadFileName_(originalName);
+    var bytes = file.getBlob().getBytes();
+    if (!canonicalName || canonicalName === originalName || bytes.length > config.maxBytes || sha256Hex_(bytes) !== hash) {
+      report.push({ row: row, status: "元のアップロードと一致しないためスキップ" });
+      continue;
+    }
+    // Persist before refund/replay. An interrupted attempt is never retried
+    // automatically, preventing a second refund or duplicate reputation award.
+    journal[key] = "started";
+    properties.setProperty(journalKey, JSON.stringify(journal));
+    updateSubmitterReputation_(email, 1, "Google Formsのファイル名付加による誤減点を取消");
+    var outcome = processResponseRow_(sheet, row, false);
+    journal[key] = "completed";
+    properties.setProperty(journalKey, JSON.stringify(journal));
+    report.push({
+      row: row, ok: outcome.ok, status: value(INTAKE_COLUMNS_.status),
+      score: submitterReputation_(email), pending: outcome.pendingCount || 0, confirmed: outcome.confirmedCount || 0
+    });
+  }
+  return report;
 }
 
 function applySnapshotToQueue_(queueSheet, entries, comparison, email, responseRow) {

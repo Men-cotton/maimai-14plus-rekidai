@@ -12,6 +12,10 @@ CSVの譜面差分を保留し、異なるGoogleアカウント2件以上で一�
 
 任意設定は `OWNER_EMAIL`、`CONSENSUS_QUORUM`、`MAX_SUBMISSIONS_PER_HOUR` です。
 
+Google Formsが付加する ` - 表示名` は受付時に除去し、通知・GitHubのファイル名には使いません。Google側の元ファイル名は残ります（Driveの書込権限は追加しません）。
+
+旧版でファイル名だけが原因で拒否された単独投稿は、`repairMaimaiFilenameRejections` で誤減点を取り消して再検証できます。他の投稿・BAN履歴がある場合や、中断済みの再処理は自動補正しません。
+
 ## BAN
 
 悪意ある提出の回答行を選択し、**maimai更新 → 選択行の送信者をBAN** を実行します。以後の提出は処理せず、未確定キューに残る同アカウントの確認票も除外します。解除は **maimai更新 → BANを解除** から行います。

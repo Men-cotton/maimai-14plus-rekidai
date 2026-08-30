@@ -15,6 +15,9 @@ var MAIMAI_REQUIRED_HEADERS_ = [
 ];
 
 var MAIMAI_FILE_PATTERN_ = /^maimai-14plus-dxscore-rank1-(\d{8})-(\d{4})\.csv$/;
+// Google Forms adds the uploader's display name before the extension. Never
+// use that untrusted suffix for identity, notifications, or public filenames.
+var MAIMAI_FORM_UPLOAD_PATTERN_ = /^(maimai-14plus-dxscore-rank1-\d{8}-\d{4})(?: - ([^\u0000-\u001F\u007F/\\]{1,200}))?\.csv$/;
 var MAIMAI_DATE_PATTERN_ = /^(\d{4})\/(\d{2})\/(\d{2}) (\d{2}):(\d{2})$/;
 var MAIMAI_FORMULA_PREFIX_ = /^[\s\uFEFF]*[=+@\-＝＋＠－]/;
 var MAIMAI_CONTROL_CHARACTERS_ = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/;
@@ -24,7 +27,8 @@ function validateMaimaiUpload_(fileName, csvText) {
   var warnings = [];
   var semanticRows = [];
   var normalizedRows = [];
-  var generatedAt = generatedAtFromFileName_(fileName);
+  var canonicalFileName = canonicalMaimaiUploadFileName_(fileName);
+  var generatedAt = generatedAtFromFileName_(canonicalFileName);
   if (!generatedAt) errors.push("CSVのファイル名が規定形式ではありません");
 
   var parsed;
@@ -113,6 +117,7 @@ function validateMaimaiUpload_(fileName, csvText) {
       ok: errors.length === 0,
       errors: unique_(errors),
       warnings: unique_(warnings),
+      fileName: canonicalFileName,
       generatedAt: generatedAt,
       rowCount: parsed && parsed.records ? parsed.records.length : 0,
       normalizedRows: errors.length ? [] : normalizedRows,
@@ -280,6 +285,15 @@ function validateRankingUrl_(value, difficulty, line, errors) {
   Object.keys(query).forEach(function (key) {
     if (["idx", "scoreType", "rankingType", "diff"].indexOf(key) < 0) errors.push(line + "行目: 詳細URLに未許可のパラメータがあります");
   });
+}
+
+function canonicalMaimaiUploadFileName_(fileName) {
+  var name = String(fileName || "");
+  var match = name.match(MAIMAI_FORM_UPLOAD_PATTERN_);
+  // Full equality also rejects a trailing newline (JavaScript's $ allows one).
+  if (!match || match[0] !== name || (match[2] !== undefined && !match[2].trim())) return "";
+  var canonical = match[1] + ".csv";
+  return generatedAtFromFileName_(canonical) ? canonical : "";
 }
 
 function generatedAtFromFileName_(fileName) {
