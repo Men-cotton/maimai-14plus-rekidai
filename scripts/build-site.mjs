@@ -1,5 +1,6 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { buildCsvTool } from "./build-csv-tool.mjs";
 import { escapeHtml as escape } from "./lib/html.mjs";
 import { formatDiagnostics, replayRepository } from "./lib/repository.mjs";
 import { chartKey, hasErrors } from "./lib/validation.mjs";
@@ -118,4 +119,5 @@ fitSongColumn();addEventListener("resize",fitSongColumn,{passive:true});
 await writeFile(resolve(outputDir, "index.html"), html, "utf8");
 await writeFile(resolve(outputDir, "data.json"), `${JSON.stringify(data)}\n`, "utf8");
 await writeFile(resolve(outputDir, "validation-report.md"), formatDiagnostics(result.diagnostics), "utf8");
+await buildCsvTool(resolve(outputDir, "csv-tool"));
 console.log(`Generated ${data.rows.length} rows in ${outputDir}`);
