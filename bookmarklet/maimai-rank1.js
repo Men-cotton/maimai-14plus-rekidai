@@ -181,6 +181,13 @@
     const maxScore = toNumber(maxScoreText);
     const starSrc = first.querySelector('img[src*="music_icon_dxstar_"]')?.getAttribute("src") || "";
     const updatedText = doc.querySelector(".ranking_title_block span")?.textContent.trim() || "";
+    // Recent records use separate date classes (red: 1 day, orange: 7 days).
+    // Stay inside the first entry so another player's date is never substituted.
+    const achievedAt = first.querySelector(".ranking_music_date, .ranking_music_date_1day, .ranking_music_date_7day")?.textContent.trim() || "";
+    const updatedAt = updatedText.replace(/\s*更新\s*$/, "");
+    const errors = [];
+    if (!isRankingDate(achievedAt)) errors.push("1位の達成日時を取得できません（欠落または不正な日時）");
+    if (!isRankingDate(updatedAt)) errors.push("ランキング更新日時を取得できません（欠落または不正な日時）");
 
     return {
       ...song,
@@ -189,11 +196,20 @@
       maxScore,
       scoreRate: maxScore ? (score / maxScore) * 100 : null,
       dxStar: starSrc.match(/dxstar_(\d)/)?.[1] || "",
-      achievedAt: first.querySelector(".ranking_music_date")?.textContent.trim() || "",
-      updatedAt: updatedText.replace(/\s*更新\s*$/, ""),
+      achievedAt,
+      updatedAt,
       sourceUrl: song.detailUrl,
-      error: "",
+      error: errors.join(" / "),
     };
+  }
+
+  function isRankingDate(text) {
+    const match = /^(\d{4})\/(\d{2})\/(\d{2}) (\d{2}):(\d{2})$/.exec(text);
+    if (!match) return false;
+    const [, year, month, day, hour, minute] = match.map(Number);
+    const date = new Date(Date.UTC(year, month - 1, day, hour, minute));
+    return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1
+      && date.getUTCDate() === day && date.getUTCHours() === hour && date.getUTCMinutes() === minute;
   }
 
   async function mapWithConcurrency(items, limit, worker) {

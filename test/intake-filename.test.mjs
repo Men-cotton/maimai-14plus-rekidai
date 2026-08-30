@@ -124,9 +124,54 @@ test("中断した補正を再実行しても二重取消・二重加点しな�
   assert.equal(ctx.submitterReputation_(email), -1);
 });
 
+test("確認済み日時で欠落だけを補正し、原本ハッシュ・二者照合を維持して誤減点取消", () => {
+  const { ctx, sheet, email } = fixture({ record: { ...candidate, achievedAt: "" } });
+  sheet.rows[1][4] = "ERROR: 2行目: DATEの形式または実在日が不正です";
+  const hash = sheet.rows[1][5];
+  const result = ctx.repairMaimaiMissingDate_(sheet, 2, hash, candidate);
+  assert.equal(result.ok, true);
+  assert.equal(result.status, "差分照合待ち");
+  assert.equal(result.pending, 1);
+  assert.equal(result.confirmed, 0);
+  assert.equal(ctx.submitterReputation_(email), 1);
+  assert.equal(sheet.rows[1][5], hash);
+  assert.match(sheet.rows[1][4], /原本CSVは保持/);
+  assert.throws(() => ctx.repairMaimaiMissingDate_(sheet, 2, hash, candidate), /既に開始済み/);
+  assert.equal(ctx.submitterReputation_(email), 1);
+});
+
+test("日時補正は原本・スコア・プレイヤー・実在日時が合わなければ拒否", () => {
+  for (const patch of [{ score: 299 }, { player: "OTHER" }, { maxScore: 303 }, { dxStar: 4 }, { achievedAt: "2026/02/30 12:00" }]) {
+    const { ctx, sheet, email } = fixture({ record: { ...candidate, achievedAt: "" } });
+    assert.throws(() => ctx.repairMaimaiMissingDate_(sheet, 2, sheet.rows[1][5], { ...candidate, ...patch }));
+    assert.equal(ctx.submitterReputation_(email), -1);
+  }
+  for (const record of [candidate, { ...candidate, achievedAt: "", rate: 98 }]) {
+    const { ctx, sheet, email } = fixture({ record });
+    assert.throws(() => ctx.repairMaimaiMissingDate_(sheet, 2, sheet.rows[1][5], candidate));
+    assert.equal(ctx.submitterReputation_(email), -1);
+  }
+});
+
+test("他の投稿・BAN・公開済み候補・ハッシュ不一致では日時補正しない", () => {
+  for (const mutate of [
+    ({ sheet }) => sheet.rows.push([...sheet.rows[1]]),
+    ({ ctx, email }) => ctx.banSubmitter_(email, "test"),
+    ({ sheet }) => { sheet.rows[1][5] = "0".repeat(64); },
+    ({ sheet }) => { sheet.rows[1][6] = 1; },
+    ({ sheet }) => { sheet.rows[1][8] = "https://github.com/example/pull/1"; },
+  ]) {
+    const f = fixture({ record: { ...candidate, achievedAt: "" } });
+    mutate(f);
+    assert.throws(() => f.ctx.repairMaimaiMissingDate_(f.sheet, 2, f.sheet.rows[1][5], candidate));
+    assert.equal(f.ctx.submitterReputation_(f.email), -1);
+  }
+});
+
 function fixture({ fileName = uploaded, record = candidate } = {}) {
   const properties = new Map();
   const ctx = {
+    LockService: { getDocumentLock: () => ({ waitLock() {}, releaseLock() {} }) },
     PropertiesService: { getScriptProperties: () => ({
       getProperty: (key) => properties.get(key) ?? null,
       setProperty: (key, value) => properties.set(key, String(value)),
